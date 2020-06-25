@@ -54,14 +54,15 @@ To use apex, you just need to set the "--use_apex_fast_mixed_precision" flag in 
 
 ## Fine tuning from a TF model
 This works in the exact same way as fine-tune from pytorch, except that the argument "--base_model" should point to a folder containing the tf checkpoint files instead of a pytorch checkpoint file.
+I also made some helper scripts to [collect data with your voice](https://github.com/NatGr/easy_voice_registration) or to [label audio files](https://github.com/NatGr/annotate_audio).
 
 ## Differences with paper
-Since we are loading the weights from the [tensorflow implementation](https://github.com/Kyubyong/dc_tts) and inspired ourselves from it, we reproduced their architectural specificities:
-    - layer normalization (only operating over the channels axis)  
-    - dropout layers  
-    - in SSRN, the transposed convolution layers have a kernel size of 3 and not 2  
-    - we clip gradient whose value is > 1 or < -1  
-    - one can optionnally use Noam LR scheduler as in tf implementation  
+Since the code can load the weights from the [tensorflow implementation](https://github.com/Kyubyong/dc_tts) and I inspired myself from it, I reproduced their architectural specificities:  
+ - layer normalization (only operating over the channels axis)  
+ - dropout layers  
+ - in SSRN, the transposed convolution layers have a kernel size of 3 and not 2  
+ - we clip gradient whose value is > 1 or < -1  
+ - one can optionnally use Noam LR scheduler as in tf implementation  
 
 Unlike the tensorflow implementation but similar to what was reported in [the paper introducing the multilingual datasets (at the end of section 4.4)](http://arxiv.org/abs/1903.11269). We have weird mumbling once the model said what it has to do, to neutralize that, we remove the outputs to Text2Mel where the attention is "looking" over padding chars.
 
