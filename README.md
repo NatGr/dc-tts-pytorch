@@ -57,11 +57,11 @@ This works in the exact same way as fine-tune from pytorch, except that the argu
 
 ## Differences with paper
 Since we are loading the weights from the [tensorflow implementation](https://github.com/Kyubyong/dc_tts) and inspired ourselves from it, we reproduced their architectural specificities:
-    - layer normalization (only operating over the channels axis)
-    - dropout layers
-    - in SSRN, the transposed convolution layers have a kernel size of 3 and not 2
-    - we clip gradient whose value is > 1 or < -1
-    - one can optionnally use Noam LR scheduler as in tf implementation
+    - layer normalization (only operating over the channels axis)  
+    - dropout layers  
+    - in SSRN, the transposed convolution layers have a kernel size of 3 and not 2  
+    - we clip gradient whose value is > 1 or < -1  
+    - one can optionnally use Noam LR scheduler as in tf implementation  
 
 Unlike the tensorflow implementation but similar to what was reported in [the paper introducing the multilingual datasets (at the end of section 4.4)](http://arxiv.org/abs/1903.11269). We have weird mumbling once the model said what it has to do, to neutralize that, we remove the outputs to Text2Mel where the attention is "looking" over padding chars.
 
