@@ -37,7 +37,7 @@ def get_spectrograms(fpath):
     y, sr = librosa.load(fpath, sr=SAMPLING_RATE)
 
     # removes silence at beginning and end of audio
-    y, _ = librosa.effects.trim(y, top_db=DB_TRIM_THRESHOLD)
+    y, _ = librosa.effects.trim(y, top_db=DB_TRIM_THRESHOLD, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
 
     # Preemphasis
     y = np.append(y[0], y[1:] - PREEMPHASIS * y[:-1])
@@ -85,7 +85,7 @@ def spectrogram2wav(mag):
     wav = signal.lfilter([1], [1, -PREEMPHASIS], wav)
 
     # trim
-    wav, _ = librosa.effects.trim(wav)
+    wav, _ = librosa.effects.trim(wav, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
 
     return wav.astype(np.float32)
 

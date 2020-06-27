@@ -4,6 +4,10 @@ DC_TTS is [relatively lightweight to train](http://arxiv.org/abs/1710.08969) and
 It is inspired from the [tensorflow implementation](https://github.com/Kyubyong/dc_tts).  
 Since the tf implementation provides models in [english](https://github.com/Kyubyong/dc_tts) as well as in [german, greek, spanish, finnish, french, hungarian, japanese, dutch, russian and chinese](https://github.com/Kyubyong/css10), this repo is designed to init its pytorch models from the corresponding tf weights.
 
+## Audio samples
+Here are audio samples in [french](https://soundcloud.com/user-1954917/french), [english](https://soundcloud.com/user-1954917/sets/english), [spanish](https://soundcloud.com/user-1954917/sets/spanish) and [german](https://soundcloud.com/user-1954917/sets/german).  
+These were generated with this repo's code but with https://github.com/Kyubyong/dc_tts and https://github.com/Kyubyong/css10 weights.  
+
 ## Installation
 You will need to install [pytorch on gpu](https://pytorch.org/get-started/locally/)
 as well as the other requirements  
