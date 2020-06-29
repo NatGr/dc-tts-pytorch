@@ -44,29 +44,27 @@ class Text2Mel(nn.Module):
             attention. (Batch, Num_chars, Time_dim_size)"""
         attention = F.softmax(torch.bmm(key.transpose(1, 2), query) / self.attn_norm, dim=1)  # (Batch, Num_chars,
         # Time_dim_size)
+
         if enforce_incr_att_offset > 1:
             attention = attention.cpu()
             offset_last_char = attention.shape[1] - 1
-            should_enforce_again = True
-            while should_enforce_again:  # in general, this happens < 10 times
-                attended_chars = attention[:, :, :enforce_incr_att_offset].argmax(dim=1)  # (Batch, Time_dim_size)
-                delta_attended_chars = attended_chars[:, 1:] - attended_chars[:, :-1]
+            for i in range(1, enforce_incr_att_offset):
+                attended_chars = attention[:, :, i-1:i+1].argmax(dim=1)
+                delta_attended_chars = attended_chars[:, 1] - attended_chars[:, 0]
                 should_replace = (delta_attended_chars < -1) | (delta_attended_chars > 3)
-                should_replace_offsets = should_replace.nonzero()
-
-                for offset in should_replace_offsets:  # under those conditions, replace the attention by a
-                    # kroeneker_delta
-                    n_tminus1_plus1 = min(attended_chars[offset[0], offset[1]] + 1, offset_last_char)
-                    kroeneker_delta = torch.zeros(attention.shape[1], device=attention.device, dtype=attention.dtype)
-                    kroeneker_delta[n_tminus1_plus1] = 1
-                    attention[offset[0], :, offset[1] + 1] = kroeneker_delta
-                should_enforce_again = len(should_replace_offsets) != 0
+                if should_replace.sum() > 0:
+                    first_attended_chars = attended_chars[:, 0]
+                    n_tminus1_plus1 = torch.min(first_attended_chars + 1,
+                                                torch.ones_like(first_attended_chars) * offset_last_char)
+                    for j in should_replace.nonzero():
+                        attention[j, :, i] = 0
+                        attention[j, n_tminus1_plus1[j], i] = 1
             attention = attention.to(key.device)
 
         seed = torch.bmm(value, attention)
         return torch.cat((seed, query), dim=1), attention
 
-    def synthesize(self, in_text: torch.Tensor, synthesize_length: int):  # TODO: I think we could spare a lot of computations by reusing the results of the previous loop iteration
+    def synthesize(self, in_text: torch.Tensor, synthesize_length: int):
         """
         synthesizes mel spectrograms for a given text. The generation stops once the attention has been on padding data
         for at least 3 steps
@@ -77,18 +75,26 @@ class Text2Mel(nn.Module):
         key, value = self.textEnc(in_text)
         full_mel_spec = torch.zeros(in_text.shape[0], self.n_mels, synthesize_length+1, device=in_text.device)
         # starts with 1 zero-padding on the left of the time-axis
-        for i in tqdm(range(synthesize_length), desc="t2m synthetisation of batch"):
+        input_is_pad = in_text == 0  # (Batch, Num_Chars)
+
+        pbar = tqdm(range(synthesize_length), desc="t2m synthetisation of batch")
+        for i in pbar:
             current_mel_spec = full_mel_spec[:, :, :i+1]
             query = self.audioEnc(current_mel_spec)
             final_enc, attention = self.__compute_attention(key, value, query, enforce_incr_att_offset=i+1)
             out_mel_spec, _ = self.audioDec(final_enc)
             full_mel_spec[:, :, i+1] = out_mel_spec[:, :, i]
-            del current_mel_spec, query, final_enc, out_mel_spec
+
+            # if, for all batch, attention is on pad chars for at least three steps, we can break the loop
+            attention_over_pad = (attention * input_is_pad.unsqueeze(-1)).sum(axis=1)
+            if i > 3 and (attention_over_pad[:, -3:] > .9).sum() == 3*attention_over_pad.shape[0]:
+                pbar.set_description("Early stopping to avoid generating silence")
+                break  # the attention was over the padding for all samples of the batch
 
         # removes the useless noise while looking at the padding
-        input_is_pad = in_text == 0  # (Batch, Num_Chars)
-        attention_over_pad = (attention * input_is_pad.unsqueeze(-1)).sum(axis=1)
-        return full_mel_spec[:, :, 1:] * (attention_over_pad <= .1).unsqueeze(1)
+        attention_over_pad = F.pad(attention_over_pad, (0, synthesize_length - attention_over_pad.shape[1]))
+        # attention is too small if we broke the loop
+        return full_mel_spec[:, :, 1:] * (attention_over_pad <= .9).unsqueeze(1)
 
 
 class TextEnc(nn.Module):
