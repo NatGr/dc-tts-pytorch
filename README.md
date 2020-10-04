@@ -3,6 +3,7 @@ This repo contains a Pytorch implementation of [Efficiently Trainable Text-to-Sp
 DC_TTS is [relatively lightweight to train](http://arxiv.org/abs/1710.08969) and [performs better than Tacotron](http://arxiv.org/abs/1903.11269).  
 It is inspired from the [tensorflow implementation](https://github.com/Kyubyong/dc_tts).  
 Since the tf implementation provides models in [english](https://github.com/Kyubyong/dc_tts) as well as in [german, greek, spanish, finnish, french, hungarian, japanese, dutch, russian and chinese](https://github.com/Kyubyong/css10), this repo is designed to init its pytorch models from the corresponding tf weights.
+When using tf-weights to init a model, do not forget to set the vocab argument to the same value as was used for training, for [english](https://github.com/Kyubyong/dc_tts/blob/master/hyperparams.py) or [other languages](https://github.com/Kyubyong/css10/blob/master/dc_tts/hyperparams.py).  
 
 ## Audio samples
 Here are audio samples in [french](https://soundcloud.com/user-1954917/french), [english](https://soundcloud.com/user-1954917/sets/english), [spanish](https://soundcloud.com/user-1954917/sets/spanish) and [german](https://soundcloud.com/user-1954917/sets/german).  
