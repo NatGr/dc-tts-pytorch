@@ -31,7 +31,7 @@ if __name__ == "__main__":
     parser.add_argument('--vocab', type=str,
                         help="authorized text token, the first must always stand for padding and the second for end of "
                              "sentence, if no uppercase letter is present in vocab, the input text will be lowercased",
-                        default=u'''␀␃ !"',-.:;?AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZzàâæçèéêëîïôùûœ–’''')
+                        default="PE abcdefghijklmnopqrstuvwxyz'.?")
     args = parser.parse_args()
     print("\n")
     print(args)

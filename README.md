@@ -10,20 +10,11 @@ Here are audio samples in [french](https://soundcloud.com/user-1954917/french), 
 These were generated with this repo's code but with https://github.com/Kyubyong/dc_tts and https://github.com/Kyubyong/css10 weights.  
 
 ## Installation
-You will need to install [pytorch on gpu](https://pytorch.org/get-started/locally/)
+You will need to install [pytorch on gpu](https://pytorch.org/get-started/locally/). This version of master uses Pytorch 1.6 to benefit from AMP automatically.
 as well as the other requirements  
 ```
 pip install -r requirements.txt
 ```
-
-### Using apex
-You can also use [nvidia's apex automatic mixed integer precision](https://github.com/NVIDIA/apex). This allows model training to be both faster and lightweight in VRAM, especially on recent GPUs.
-To do so, the simpler is to use [nvidia-docker](https://github.com/NVIDIA/nvidia-docker) and the [nvidia's pytorch docker image](https://ngc.nvidia.com/catalog/containers/nvidia:pytorch).
-You can then run it with
-```
-docker run --gpus all -it --ipc=host --rm -v local_dir:container_dir IMAGE_ID 
-```
-all the needed python libraries are preinstalled on it.
 
 ### Loading tf weights
 To load tensorflow weights, you will need to install a version of tensorflow 1 posterior to 1.3 (don't panic, you don't need gpu support for this). For example:
@@ -53,9 +44,6 @@ The wav audio files should be in a folder named audio next to my_sentences.txt
 train.py's "--train_data_folder" flag should contain an audio folder containing the data and a transcript.csv file.  
 The trascript.csv file should contain two columns named file and sentence. File being the file name in the audio folder and sentence the sentence spoken within the file. These values must be separated by a ";" and sentence should contain no ";".
 One of the first things done in train.py is to compute and store the mel and mag spectrograms and store them on disk, this takes a few minites and requires quite a lot of disk space (around 25GB for 5GB of audio (20 hours)).
-
-### Using apex
-To use apex, you just need to set the "--use_apex_fast_mixed_precision" flag in train.py
 
 ## Fine tuning from a TF model
 This works in the exact same way as fine-tune from pytorch, except that the argument "--base_model" should point to a folder containing the tf checkpoint files instead of a pytorch checkpoint file.

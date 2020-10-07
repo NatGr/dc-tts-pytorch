@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from data_loading import TTSDataset, BatchSampler, collate_batch
@@ -44,11 +45,8 @@ if __name__ == "__main__":
     parser.add_argument('--base_model', type=str,
                         help="either a pytorch file to resume training from, a folder containing tf checkpoints to do "
                              "the same or nothing to start from scratch")
-    parser.add_argument('--use_apex_fast_mixed_precision', action="store_true",
-                        help="uses nvidia apex to perform mixed precision training (O2 flag)")
     parser.add_argument('--use_noam_scheduler', action="store_true", help="uses Noam LR scheduler as in tf "
                                                                           "implementation")
-    # https://medium.com/the-artificial-impostor/use-nvidia-apex-for-easy-mixed-precision-training-in-pytorch-46841c6eed8c
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--embed_size', type=int, default=128)
@@ -58,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--vocab', type=str,
                         help="authorized text token, the first must always stand for padding and the second for end of "
                              "sentence, if no uppercase letter is present in vocab, the input text will be lowercased",
-                        default=u'''␀␃ !"',-.:;?AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZzàâæçèéêëîïôùûœ–’''')
+                        default="PE abcdefghijklmnopqrstuvwxyz'.?")
     parser.add_argument('--max_num_chars', type=int, default=250,
                         help="training data with more chars than that will be removed, so that 2 long training samples "
                              "do not prevent from using a good batch size")
@@ -86,6 +84,7 @@ if __name__ == "__main__":
                              collate_fn=lambda x: collate_batch(x, args.net == "Text2Mel"))
 
     optimizer = optim.Adam([v for v in model.parameters() if v.requires_grad], lr=args.lr, betas=(.5, .9), eps=1e-6)
+    scaler = GradScaler()
 
     # reload checkpoint parameters
     epoch = 0
@@ -96,6 +95,7 @@ if __name__ == "__main__":
             checkpoint = torch.load(args.base_model)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scaler.load_state_dict(checkpoint["scaler"])
             epoch = checkpoint['epoch'] + 1  # we start a new epoch
             num_samples_treated = checkpoint['num_samples_treated']
             num_batches_treated = checkpoint['num_batches_treated']
@@ -112,17 +112,6 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model.to(device)
-
-    if args.use_apex_fast_mixed_precision:
-        from apex import amp
-        APEX_AVAILABLE = True
-
-        model, optimizer = amp.initialize(model, optimizer, opt_level="O2",
-                                          keep_batchnorm_fp32=True, loss_scale="dynamic")
-        if args.base_model is not None and os.path.isfile(args.base_model):  # load amp saved state
-            amp.load_state_dict(checkpoint['amp'])
-    else:
-        APEX_AVAILABLE = False
 
     if args.use_noam_scheduler:
         scheduler = LambdaLR(optimizer, lr_lambda=lambda x: noam_scheduler(args.lr, x), last_epoch=num_batches_treated)
@@ -142,16 +131,19 @@ if __name__ == "__main__":
             batch = [item.to(device) for item in batch]
             batch_size = batch[0].shape[0]
 
+            optimizer.zero_grad()
+
             # compute output
-            if args.net == "Text2Mel":
-                text, in_mel, target_mel = batch
-                pred_mel, logits, attention = model(text, in_mel)
-                loss = F.l1_loss(pred_mel, target_mel) + \
-                       F.binary_cross_entropy_with_logits(logits, target_mel) + guided_attention_loss(attention)
-            else:
-                mel, mag = batch
-                pred_mags, logits = model(mel)
-                loss = F.l1_loss(pred_mags, mag) + F.binary_cross_entropy_with_logits(logits, mag)
+            with autocast():
+                if args.net == "Text2Mel":
+                    text, in_mel, target_mel = batch
+                    pred_mel, logits, attention = model(text, in_mel)
+                    loss = F.l1_loss(pred_mel, target_mel) + \
+                           F.binary_cross_entropy_with_logits(logits, target_mel) + guided_attention_loss(attention)
+                else:
+                    mel, mag = batch
+                    pred_mags, logits = model(mel)
+                    loss = F.l1_loss(pred_mags, mag) + F.binary_cross_entropy_with_logits(logits, mag)
             loss_val = loss.item()
 
             new_num_phrases_considered = num_phrases_considered + batch_size
@@ -159,16 +151,11 @@ if __name__ == "__main__":
             num_phrases_considered = new_num_phrases_considered
 
             # compute gradient and do SGD step
-            optimizer.zero_grad()
-
-            if APEX_AVAILABLE:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-                torch.nn.utils.clip_grad_value_(amp.master_params(optimizer), 1)
-            else:
-                loss.backward()
-                torch.nn.utils.clip_grad_value_(model.parameters(), 1)
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_value_(model.parameters(), 1)
+            scaler.step(optimizer)
+            scaler.update()
 
             if scheduler is not None:
                 scheduler.step()
@@ -183,7 +170,7 @@ if __name__ == "__main__":
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': epoch,
                     'num_samples_treated': new_num_samples_treated,
-                    'amp': amp.state_dict() if APEX_AVAILABLE else None,
+                    "scaler": scaler.state_dict(),
                     'num_batches_treated': num_batches_treated
                 }
                 torch.save(state_dict, os.path.join(checkpoint_dir, f'{args.net}-{new_num_samples_treated}.ckpt'))
@@ -197,7 +184,7 @@ if __name__ == "__main__":
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': epoch,
                     'num_samples_treated': new_num_samples_treated,
-                    'amp': amp.state_dict() if APEX_AVAILABLE else None,
+                    "scaler": scaler.state_dict(),
                     'num_batches_treated': num_batches_treated
                 }
                 torch.save(state_dict, os.path.join(checkpoint_dir, f'{args.net}-{new_num_samples_treated}.ckpt'))

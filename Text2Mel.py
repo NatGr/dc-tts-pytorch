@@ -56,7 +56,7 @@ class Text2Mel(nn.Module):
                     first_attended_chars = attended_chars[:, 0]
                     n_tminus1_plus1 = torch.min(first_attended_chars + 1,
                                                 torch.ones_like(first_attended_chars) * offset_last_char)
-                    for j in should_replace.nonzero():
+                    for j in should_replace.nonzero(as_tuple=True):
                         attention[j, :, i] = 0
                         attention[j, n_tminus1_plus1[j], i] = 1
             attention = attention.to(key.device)
