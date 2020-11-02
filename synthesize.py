@@ -96,6 +96,6 @@ if __name__ == "__main__":
         for i, (sentence, sentence_offsets) in tqdm(enumerate(zip(sentences, sentences_offsets)),
                                                     desc="postprocessing", total=len(sentences)):
             wav = spectrogram2wav(torch.cat([mags[i // args.max_batch_size][i % args.max_batch_size, :].squeeze(0)
-                                  for i in sentence_offsets], 1).numpy())
+                                  for i in sentence_offsets], 1))
             file_name = os.path.join(audio_folder, f"{sentence[:20]}_{i}.wav")
             wavfile.write(file_name, SAMPLING_RATE, wav)

@@ -1,7 +1,13 @@
-"""the contents of this file were basically copied from https://github.com/Kyubyong/dc_tts/blob/master/utils.py"""
 import numpy as np
-import librosa
-import copy
+import torch
+import torch.nn.functional as F
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import torchaudio  # we are using sox as backend
+torchaudio.set_audio_backend("sox_io")
+from torchaudio.transforms import GriffinLim, Resample, MelScale
+import sys
 from scipy import signal
 
 
@@ -25,91 +31,77 @@ DB_TRIM_THRESHOLD = 70  # more than default to be sure no speech audio is cut
 def get_spectrograms(fpath):
     """Parse the wave file in `fpath` and
     Returns normalized melspectrogram and linear spectrogram.
+    This would be faster if we batched it.
 
     Args:
       fpath: A string. The full path of a sound file.
 
     Returns:
-      mel: A 2d array of shape (n_mels, T) and dtype of float32.
-      mag: A 2d array of shape (n_mags, T) and dtype of float32.
+      mel: A 2d pytorch tensor of shape (n_mels, T) and dtype of float32.
+      mag: A 2d pytorch tensor of shape (n_mags, T) and dtype of float32.
     """
     # Loading sound file
-    y, sr = librosa.load(fpath, sr=SAMPLING_RATE)
-
-    # removes silence at beginning and end of audio
-    y, _ = librosa.effects.trim(y, top_db=DB_TRIM_THRESHOLD, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
+    y, sr = torchaudio.load_wav(fpath).squeeze()  # since there is one channel, we remove it
+    if len(y.shape) != 1:  # handle the case where there are two channels
+        if y.shape[0] == 2:
+            y = y.mean(axis=0)
+        elif y.shape[1] == 2:
+            y = y.mean(axis=1)
+        else:
+            print(f"file {fpath} has wrong dimensions, exciting...")
+            sys.exit(-1)
+    if sr != SAMPLING_RATE:
+        y = Resample(sr, SAMPLING_RATE)(y)
 
     # Preemphasis
-    y = np.append(y[0], y[1:] - PREEMPHASIS * y[:-1])
+    y = torch.cat((y[0], y[1:] - PREEMPHASIS * y[:-1]))
 
     # stft
-    linear = librosa.stft(y=y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH)
+    linear = torch.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH, return_complex=True)
 
     # magnitude spectrogram
-    mag = np.abs(linear)  # (n_mags, T)
+    mag = torch.abs(linear)  # (n_mags, T)
 
     # mel spectrogram
-    mel_basis = librosa.filters.mel(SAMPLING_RATE, N_FFT, N_MELS)  # (n_mels, n_mags)
-    mel = np.dot(mel_basis, mag)  # (n_mels, t)
+    mel = MelScale(n_mels=N_MELS, sample_rate=SAMPLING_RATE, n_stft=N_FFT)(mag)
 
     # to decibel
-    mel = 20 * np.log10(np.maximum(1e-5, mel))
-    mag = 20 * np.log10(np.maximum(1e-5, mag))
+    mel = 20 * torch.log10(torch.maximum(mel, torch.tensor(1e-5)))
+    mag = 20 * torch.log10(torch.maximum(mag, torch.tensor(1e-5)))
 
     # normalize
-    mel = np.clip((mel - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
-    mag = np.clip((mag - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
+    mel = torch.clamp((mel - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
+    mag = torch.clamp((mag - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
 
-    return mel.astype(np.float32), mag.astype(np.float32)
+    return mel.type(torch.float32), mag.type(torch.float32)
 
 
 def spectrogram2wav(mag):
     """ Generate wave file from linear magnitude spectrogram
 
     Args:
-      mag: A numpy array of (n_mags, T)
+      mag: A tensor of (n_mags, T)
 
     Returns:
       wav: A 1-D numpy array.
     """
     # de-noramlize
-    mag = (np.clip(mag, 0, 1) * MAX_DB) - MAX_DB + REF_DB
+    mag = (torch.clamp(mag, 0, 1) * MAX_DB) - MAX_DB + REF_DB
 
     # to amplitude
-    mag = np.power(10.0, mag * 0.05)
+    mag = torch.pow(10.0, mag * 0.05)
 
-    # wav reconstruction
-    wav = griffin_lim(mag**POWER)
+    # griffin-lim
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # deprecation warnings depending on GriffinLim implementation
+        wav = GriffinLim(n_fft=N_FFT, win_length=WIN_LENGTH, hop_length=HOP_LENGTH, power=1/POWER, normalized=True)(mag)
 
     # de-preemphasis
-    wav = signal.lfilter([1], [1, -PREEMPHASIS], wav)
-
-    # trim
-    wav, _ = librosa.effects.trim(wav, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
+    wav = signal.lfilter([1], [1, -PREEMPHASIS], wav.numpy())  # for some reason, this is much faster than
+    # torchaudio.functional.lfilter(wav, torch.tensor([1, -PREEMPHASIS], dtype=torch.float32),
+    # torch.tensor([1, 1], dtype=torch.float32))
 
     return wav.astype(np.float32)
-
-
-def griffin_lim(spectrogram):
-    """Applies Griffin-Lim's raw."""
-    x_best = copy.deepcopy(spectrogram)
-    for i in range(N_ITER):
-        x_t = invert_spectrogram(x_best)
-        est = librosa.stft(x_t, N_FFT, HOP_LENGTH, win_length=WIN_LENGTH)
-        phase = est / np.maximum(1e-8, np.abs(est))
-        x_best = spectrogram * phase
-    x_t = invert_spectrogram(x_best)
-    y = np.real(x_t)
-
-    return y
-
-
-def invert_spectrogram(spectrogram):
-    """Applies inverse fft.
-    Args:
-      spectrogram: [n_mags, t]
-    """
-    return librosa.istft(spectrogram, HOP_LENGTH, win_length=WIN_LENGTH, window="hann")
 
 
 def load_spectrograms(fpath):
@@ -120,8 +112,8 @@ def load_spectrograms(fpath):
 
     # Marginal padding for reduction shape sync.
     num_paddings = REDUCTION_FACTOR - (t % REDUCTION_FACTOR) if t % REDUCTION_FACTOR != 0 else 0
-    mel = np.pad(mel, [[0, 0], [0, num_paddings]], mode="constant")
-    mag = np.pad(mag, [[0, 0], [0, num_paddings]], mode="constant")
+    mel = F.pad(mel, [0, num_paddings, 0, 0], mode="constant")
+    mag = F.pad(mag, [0, num_paddings, 0, 0], mode="constant")
 
     # Reduction
     mel = mel[:, ::REDUCTION_FACTOR]

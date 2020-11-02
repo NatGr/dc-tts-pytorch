@@ -10,7 +10,11 @@ Here are audio samples in [french](https://soundcloud.com/user-1954917/french), 
 These were generated with this repo's code but with https://github.com/Kyubyong/dc_tts and https://github.com/Kyubyong/css10 weights.  
 
 ## Installation
-You will need to install [pytorch on gpu](https://pytorch.org/get-started/locally/). This version of master uses Pytorch 1.6 to benefit from AMP automatically.
+You will need to install [pytorch on gpu](https://pytorch.org/get-started/locally/), as well as TorchAudio
+```
+conda install torchaudio -c pytorch
+```
+.This version of master uses Pytorch 1.6 to benefit from AMP automatically, postprocessing is faster with Pytorch 1.7. So we recommend pytorch version >= 1.7.  
 as well as the other requirements  
 ```
 pip install -r requirements.txt
