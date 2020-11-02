@@ -41,29 +41,28 @@ def get_spectrograms(fpath):
       mag: A 2d pytorch tensor of shape (n_mags, T) and dtype of float32.
     """
     # Loading sound file
-    y, sr = torchaudio.load_wav(fpath).squeeze()  # since there is one channel, we remove it
-    if len(y.shape) != 1:  # handle the case where there are two channels
-        if y.shape[0] == 2:
-            y = y.mean(axis=0)
-        elif y.shape[1] == 2:
-            y = y.mean(axis=1)
-        else:
-            print(f"file {fpath} has wrong dimensions, exciting...")
-            sys.exit(-1)
+    y, sr = torchaudio.load(fpath, normalize=True)
+
+    if y.shape[0] == 2:  # handle the case where there are two channels
+        y = y.mean(axis=0, keepdims=True)
+
     if sr != SAMPLING_RATE:
         y = Resample(sr, SAMPLING_RATE)(y)
+    y = y.squeeze()
 
     # Preemphasis
-    y = torch.cat((y[0], y[1:] - PREEMPHASIS * y[:-1]))
+    y = torch.cat((y[:1], y[1:] - PREEMPHASIS * y[:-1]))
 
     # stft
-    linear = torch.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH, return_complex=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        linear = torch.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH, return_complex=True)
 
     # magnitude spectrogram
     mag = torch.abs(linear)  # (n_mags, T)
 
     # mel spectrogram
-    mel = MelScale(n_mels=N_MELS, sample_rate=SAMPLING_RATE, n_stft=N_FFT)(mag)
+    mel = MelScale(n_mels=N_MELS, sample_rate=SAMPLING_RATE)(mag)
 
     # to decibel
     mel = 20 * torch.log10(torch.maximum(mel, torch.tensor(1e-5)))
