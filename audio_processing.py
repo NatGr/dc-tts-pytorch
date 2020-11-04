@@ -1,15 +1,13 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 import warnings
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     import torchaudio  # we are using sox as backend
 torchaudio.set_audio_backend("sox_io")
 from torchaudio.transforms import GriffinLim, Resample, MelScale
-import sys
 from scipy import signal
-
+import librosa
 
 SAMPLING_RATE = 22050
 N_FFT = 2048  # fft points (samples)
@@ -31,48 +29,40 @@ DB_TRIM_THRESHOLD = 70  # more than default to be sure no speech audio is cut
 def get_spectrograms(fpath):
     """Parse the wave file in `fpath` and
     Returns normalized melspectrogram and linear spectrogram.
-    This would be faster if we batched it.
-
     Args:
       fpath: A string. The full path of a sound file.
-
     Returns:
-      mel: A 2d pytorch tensor of shape (n_mels, T) and dtype of float32.
-      mag: A 2d pytorch tensor of shape (n_mags, T) and dtype of float32.
+      mel: A 2d array of shape (n_mels, T) and dtype of float32.
+      mag: A 2d array of shape (n_mags, T) and dtype of float32.
     """
     # Loading sound file
-    y, sr = torchaudio.load(fpath, normalize=True)
+    y, sr = librosa.load(fpath, sr=SAMPLING_RATE)
 
-    if y.shape[0] == 2:  # handle the case where there are two channels
-        y = y.mean(axis=0, keepdims=True)
-
-    if sr != SAMPLING_RATE:
-        y = Resample(sr, SAMPLING_RATE)(y)
-    y = y.squeeze()
+    # removes silence at beginning and end of audio
+    y, _ = librosa.effects.trim(y, top_db=DB_TRIM_THRESHOLD, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
 
     # Preemphasis
-    y = torch.cat((y[:1], y[1:] - PREEMPHASIS * y[:-1]))
+    y = np.append(y[0], y[1:] - PREEMPHASIS * y[:-1])
 
     # stft
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        linear = torch.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH, return_complex=True)
+    linear = librosa.stft(y=y, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH)
 
     # magnitude spectrogram
-    mag = torch.abs(linear)  # (n_mags, T)
+    mag = np.abs(linear)  # (n_mags, T)
 
     # mel spectrogram
-    mel = MelScale(n_mels=N_MELS, sample_rate=SAMPLING_RATE)(mag)
+    mel_basis = librosa.filters.mel(SAMPLING_RATE, N_FFT, N_MELS)  # (n_mels, n_mags)
+    mel = np.dot(mel_basis, mag)  # (n_mels, t)
 
     # to decibel
-    mel = 20 * torch.log10(torch.maximum(mel, torch.tensor(1e-5)))
-    mag = 20 * torch.log10(torch.maximum(mag, torch.tensor(1e-5)))
+    mel = 20 * np.log10(np.maximum(1e-5, mel))
+    mag = 20 * np.log10(np.maximum(1e-5, mag))
 
     # normalize
-    mel = torch.clamp((mel - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
-    mag = torch.clamp((mag - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
+    mel = np.clip((mel - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
+    mag = np.clip((mag - REF_DB + MAX_DB) / MAX_DB, 1e-8, 1)
 
-    return mel.type(torch.float32), mag.type(torch.float32)
+    return mel.astype(np.float32), mag.astype(np.float32)
 
 
 def spectrogram2wav(mag):
@@ -100,6 +90,9 @@ def spectrogram2wav(mag):
     # torchaudio.functional.lfilter(wav, torch.tensor([1, -PREEMPHASIS], dtype=torch.float32),
     # torch.tensor([1, 1], dtype=torch.float32))
 
+    # trim
+    wav, _ = librosa.effects.trim(wav, frame_length=WIN_LENGTH, hop_length=HOP_LENGTH)
+
     return wav.astype(np.float32)
 
 
@@ -111,8 +104,8 @@ def load_spectrograms(fpath):
 
     # Marginal padding for reduction shape sync.
     num_paddings = REDUCTION_FACTOR - (t % REDUCTION_FACTOR) if t % REDUCTION_FACTOR != 0 else 0
-    mel = F.pad(mel, [0, num_paddings, 0, 0], mode="constant")
-    mag = F.pad(mag, [0, num_paddings, 0, 0], mode="constant")
+    mel = np.pad(mel, [[0, 0], [0, num_paddings]], mode="constant")
+    mag = np.pad(mag, [[0, 0], [0, num_paddings]], mode="constant")
 
     # Reduction
     mel = mel[:, ::REDUCTION_FACTOR]

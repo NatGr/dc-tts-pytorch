@@ -43,8 +43,8 @@ class TTSDataset(Dataset):
             for file in self.data["file"]:
                 mel, mag = load_spectrograms(os.path.join(audio, file))
                 mag_sizes.append(mag.shape[1])
-                torch.save(mel, os.path.join(self.mels, file[:-3] + "pt"))
-                torch.save(mag, os.path.join(self.mags, file[:-3] + "pt"))
+                torch.save(torch.from_numpy(mel), os.path.join(self.mels, file[:-3] + "pt"))
+                torch.save(torch.from_numpy(mag), os.path.join(self.mags, file[:-3] + "pt"))
             self.data["mag_size"] = mag_sizes
             self.data.to_csv(transcript, index=False, sep=";")
 
